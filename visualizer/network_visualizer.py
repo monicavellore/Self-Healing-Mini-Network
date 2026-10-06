@@ -1,33 +1,34 @@
-import socket
 import json
+import socket
 import time
+
 import matplotlib.pyplot as plt
 import networkx as nx
 
 
 # --------------------------------------------------
-# Node ports
+# Configuration
 # --------------------------------------------------
 
-node_ports = {
+TOPOLOGY_FILE = "nodes/topology.json"
+
+NODE_PORTS = {
     "A": 5001,
     "B": 5002,
     "C": 5003,
     "D": 5004
 }
 
+REFRESH_INTERVAL = 5
+
 
 # --------------------------------------------------
 # Load topology
 # --------------------------------------------------
 
-with open("nodes/topology.json", "r") as file:
+with open(TOPOLOGY_FILE, "r") as file:
     topology = json.load(file)
 
-
-# --------------------------------------------------
-# Create network graph
-# --------------------------------------------------
 
 network = nx.Graph()
 
@@ -43,100 +44,67 @@ for connection in topology["connections"]:
 # --------------------------------------------------
 
 def check_node(node):
-
     try:
-        sock = socket.socket(
-            socket.AF_INET,
-            socket.SOCK_STREAM
-        )
-
-        sock.settimeout(0.5)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
 
         sock.connect(
-            ("127.0.0.1", node_ports[node])
+            ("127.0.0.1", NODE_PORTS[node])
         )
 
         sock.close()
-
         return True
 
-    except:
+    except Exception:
         return False
 
 
 # --------------------------------------------------
-# Find active route
+# Get current network state
 # --------------------------------------------------
 
-def find_active_route(online_nodes):
+def get_network_state():
+    online_nodes = []
+    offline_nodes = []
+
+    for node in network.nodes:
+        if check_node(node):
+            online_nodes.append(node)
+        else:
+            offline_nodes.append(node)
 
     active_network = network.subgraph(
         online_nodes
     ).copy()
 
-    try:
+    active_route = None
 
-        route = nx.shortest_path(
+    if (
+        "A" in active_network
+        and "C" in active_network
+        and nx.has_path(active_network, "A", "C")
+    ):
+        active_route = nx.shortest_path(
             active_network,
-            source="A",
-            target="C"
+            "A",
+            "C"
         )
 
-        return route
-
-    except nx.NetworkXNoPath:
-
-        return []
-
-
-# --------------------------------------------------
-# Determine network status
-# --------------------------------------------------
-
-def get_network_status(online_nodes, active_route):
-
-    if not active_route:
-        return "NO ROUTE"
-
-    if active_route == ["A", "B", "C"]:
-        return "HEALTHY"
-
-    return "SELF-HEALING"
+    return online_nodes, offline_nodes, active_route
 
 
 # --------------------------------------------------
 # Draw network
 # --------------------------------------------------
 
-def draw_network():
+def draw_network(
+    ax,
+    online_nodes,
+    offline_nodes,
+    active_route
+):
+    ax.clear()
 
-    online_nodes = []
-    offline_nodes = []
-
-    # Check every node
-    for node in network.nodes:
-
-        if check_node(node):
-            online_nodes.append(node)
-
-        else:
-            offline_nodes.append(node)
-
-    # Find current active route
-    active_route = find_active_route(
-        online_nodes
-    )
-
-    # Determine network status
-    network_status = get_network_status(
-        online_nodes,
-        active_route
-    )
-
-    # Clear previous visualization
-    plt.clf()
-
-    # Fixed positions
     positions = {
         "A": (-1, 0),
         "B": (0, 1),
@@ -144,26 +112,20 @@ def draw_network():
         "D": (0, -1)
     }
 
-    # --------------------------------------------------
     # Draw all topology connections
-    # --------------------------------------------------
-
     nx.draw_networkx_edges(
         network,
         positions,
-        width=2,
-        alpha=0.4
+        ax=ax,
+        edge_color="lightgray",
+        width=2
     )
 
-    # --------------------------------------------------
     # Draw active route
-    # --------------------------------------------------
-
-    if len(active_route) >= 2:
-
+    if active_route and len(active_route) > 1:
         route_edges = list(
             zip(
-                active_route,
+                active_route[:-1],
                 active_route[1:]
             )
         )
@@ -172,158 +134,202 @@ def draw_network():
             network,
             positions,
             edgelist=route_edges,
-            width=4
+            ax=ax,
+            edge_color="black",
+            width=5
         )
 
-    # --------------------------------------------------
     # Draw online nodes
-    # --------------------------------------------------
-
     if online_nodes:
-
         nx.draw_networkx_nodes(
             network,
             positions,
             nodelist=online_nodes,
-            node_size=1800,
-            node_color="green"
+            ax=ax,
+            node_color="green",
+            node_size=1800
         )
 
-    # --------------------------------------------------
     # Draw offline nodes
-    # --------------------------------------------------
-
     if offline_nodes:
-
         nx.draw_networkx_nodes(
             network,
             positions,
             nodelist=offline_nodes,
+            ax=ax,
+            node_color="white",
             node_size=1800,
             node_shape="X",
-            node_color="red"
+            edgecolors="red",
+            linewidths=4
         )
 
-    # --------------------------------------------------
-    # Draw node names
-    # --------------------------------------------------
-
+    # Node labels
     nx.draw_networkx_labels(
         network,
         positions,
-        font_size=14,
+        ax=ax,
+        font_size=18,
         font_weight="bold"
     )
 
-    # --------------------------------------------------
-    # Display route
-    # --------------------------------------------------
+    # Determine network status
+    if active_route == ["A", "B", "C"]:
+        network_status = "HEALTHY"
 
-    if active_route:
-
-        route_text = " → ".join(
-            active_route
-        )
+    elif active_route is not None:
+        network_status = "SELF-HEALING"
 
     else:
+        network_status = "NO ROUTE"
 
-        route_text = "No route available"
-
-    # --------------------------------------------------
-    # Display network information
-    # --------------------------------------------------
-
-    plt.title(
-        "Self-Healing Mini Network"
+    # Title
+    ax.set_title(
+        "Self-Healing Mini Network",
+        fontsize=20,
+        pad=20
     )
 
-    plt.text(
-        -1.5,
-        -1.5,
-        f"Online: {online_nodes}\n"
-        f"Offline: {offline_nodes}\n"
-        f"Active Route: {route_text}\n"
-        f"Network Status: {network_status}",
-        fontsize=11
+    # Status information
+    online_text = f"Online: {online_nodes}"
+    offline_text = f"Offline: {offline_nodes}"
+
+    if active_route:
+        route_text = (
+            "Active Route: "
+            + " → ".join(active_route)
+        )
+    else:
+        route_text = "Active Route: None"
+
+    status_text = (
+        f"{online_text}\n"
+        f"{offline_text}\n"
+        f"{route_text}\n"
+        f"Network Status: {network_status}"
     )
 
-    # --------------------------------------------------
+    ax.text(
+        -1.55,
+        -1.35,
+        status_text,
+        fontsize=13,
+        verticalalignment="top"
+    )
+
     # Legend
-    # --------------------------------------------------
-
-    online_legend = plt.Line2D(
-        [0],
-        [0],
+    online_marker = plt.Line2D(
+        [],
+        [],
         marker="o",
-        color="w",
-        label="Online Node",
+        linestyle="None",
+        markersize=12,
         markerfacecolor="green",
-        markersize=12
+        markeredgecolor="green",
+        label="Online Node"
     )
 
-    offline_legend = plt.Line2D(
-        [0],
-        [0],
+    offline_marker = plt.Line2D(
+        [],
+        [],
         marker="X",
-        color="w",
-        label="Offline Node",
-        markerfacecolor="red",
-        markersize=12
+        linestyle="None",
+        markersize=12,
+        markerfacecolor="white",
+        markeredgecolor="red",
+        markeredgewidth=3,
+        label="Offline Node"
     )
 
-    route_legend = plt.Line2D(
-        [0],
-        [0],
+    route_marker = plt.Line2D(
+        [],
+        [],
         color="black",
-        linewidth=4,
+        linewidth=5,
         label="Active Route"
     )
 
-    plt.legend(
+    ax.legend(
         handles=[
-            online_legend,
-            offline_legend,
-            route_legend
+            online_marker,
+            offline_marker,
+            route_marker
         ],
-        loc="upper right"
+        loc="upper right",
+        fontsize=11
     )
 
-    plt.axis("off")
+    ax.set_axis_off()
 
-    plt.pause(0.1)
+    # Keep a consistent view
+    ax.set_xlim(-1.7, 1.7)
+    ax.set_ylim(-1.6, 1.5)
 
 
 # --------------------------------------------------
-# Start visualization
+# Main visualizer
 # --------------------------------------------------
 
-plt.ion()
+def main():
 
-figure = plt.figure(
-    figsize=(8, 6)
-)
+    print("===================================")
+    print("   SELF-HEALING NETWORK VISUALIZER")
+    print("===================================")
 
-print("\n===================================")
-print("   SELF-HEALING NETWORK VISUALIZER")
-print("===================================")
+    # IMPORTANT:
+    # Create ONE figure only.
+    # It will be reused for every refresh.
+    plt.ion()
 
-try:
-
-    while True:
-
-        draw_network()
-
-        print(
-            "Network status updated."
-        )
-
-        time.sleep(5)
-
-except KeyboardInterrupt:
-
-    print(
-        "\nVisualizer stopped."
+    fig, ax = plt.subplots(
+        figsize=(10, 8)
     )
 
-    plt.ioff()
-    plt.close()
+    fig.canvas.manager.set_window_title(
+        "Self-Healing Mini Network"
+    )
+
+    try:
+
+        while plt.fignum_exists(fig.number):
+
+            online_nodes, offline_nodes, active_route = (
+                get_network_state()
+            )
+
+            draw_network(
+                ax,
+                online_nodes,
+                offline_nodes,
+                active_route
+            )
+
+            # Redraw the SAME window
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+
+            print("Network status updated.")
+
+            # Keep the GUI responsive while waiting
+            for _ in range(50):
+
+                if not plt.fignum_exists(fig.number):
+                    break
+
+                plt.pause(REFRESH_INTERVAL / 50)
+
+    except KeyboardInterrupt:
+
+        print("\nVisualizer stopped.")
+
+    finally:
+
+        plt.close(fig)
+
+
+# --------------------------------------------------
+# Start
+# --------------------------------------------------
+
+if __name__ == "__main__":
+    main()
